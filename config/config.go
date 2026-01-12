@@ -120,19 +120,7 @@ type Experimental struct {
 	QUICGoDisableGSO         bool
 	QUICGoDisableECN         bool
 	IP4PEnable               bool
-	AnyTLSSessionManagement  *AnyTLSSessionManagement `yaml:"anytls-session-management"`
-}
-
-// AnyTLSSessionManagement config for global session pool management
-type AnyTLSSessionManagement struct {
-	EnsureIdleSession           int           `yaml:"ensure-idle-session"`             // Proactive pool size (target)
-	MinIdleSession              int           `yaml:"min-idle-session"`                // Passive idle protection
-	MinIdleSessionForAge        int           `yaml:"min-idle-session-for-age"`        // Passive age protection
-	EnsureIdleSessionCreateRate int           `yaml:"ensure-idle-session-create-rate"` // Max new sessions per cycle
-	MaxConnectionLifetime       time.Duration `yaml:"max-connection-lifetime"`         // Age-based rotation
-	ConnectionLifetimeJitter    time.Duration `yaml:"connection-lifetime-jitter"`      // Randomization range
-	IdleSessionTimeout          time.Duration `yaml:"idle-session-timeout"`            // Idle timeout
-	IdleSessionCheckInterval    time.Duration `yaml:"idle-session-check-interval"`     // Cleanup cycle interval
+	AnyTLSSessionManagement  *C.AnyTLSSessionManagement `yaml:"anytls-session-management"`
 }
 
 // IPTables config
@@ -353,7 +341,7 @@ type RawExperimental struct {
 	QUICGoDisableGSO        bool                         `yaml:"quic-go-disable-gso"`
 	QUICGoDisableECN        bool                         `yaml:"quic-go-disable-ecn"`
 	IP4PEnable              bool                         `yaml:"dialer-ip4p-convert"`
-	AnyTLSSessionManagement *AnyTLSSessionManagement     `yaml:"anytls-session-management"`
+	AnyTLSSessionManagement *C.AnyTLSSessionManagement   `yaml:"anytls-session-management"`
 }
 
 type RawProfile struct {

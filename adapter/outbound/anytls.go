@@ -9,7 +9,6 @@ import (
 
 	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/component/proxydialer"
-	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/anytls"
 	"github.com/metacubex/mihomo/transport/vmess"
@@ -20,19 +19,19 @@ import (
 
 // Global session management config for AnyTLS
 var (
-	globalAnyTLSSessionConfig     *config.AnyTLSSessionManagement
+	globalAnyTLSSessionConfig     *C.AnyTLSSessionManagement
 	globalAnyTLSSessionConfigLock sync.RWMutex
 )
 
 // SetGlobalAnyTLSSessionConfig sets the global session management configuration
-func SetGlobalAnyTLSSessionConfig(cfg *config.AnyTLSSessionManagement) {
+func SetGlobalAnyTLSSessionConfig(cfg *C.AnyTLSSessionManagement) {
 	globalAnyTLSSessionConfigLock.Lock()
 	defer globalAnyTLSSessionConfigLock.Unlock()
 	globalAnyTLSSessionConfig = cfg
 }
 
 // getGlobalAnyTLSSessionConfig retrieves the global session management configuration
-func getGlobalAnyTLSSessionConfig() *config.AnyTLSSessionManagement {
+func getGlobalAnyTLSSessionConfig() *C.AnyTLSSessionManagement {
 	globalAnyTLSSessionConfigLock.RLock()
 	defer globalAnyTLSSessionConfigLock.RUnlock()
 	return globalAnyTLSSessionConfig
