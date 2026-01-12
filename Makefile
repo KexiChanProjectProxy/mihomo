@@ -57,7 +57,7 @@ WINDOWS_ARCH_LIST = \
 	windows-arm64 \
     windows-arm32v7
 
-all:linux-amd64-v3 linux-arm64\
+all:linux-amd64-v1 linux-amd64-v2 linux-amd64-v3 linux-arm64\
 	darwin-amd64-v3 darwin-arm64\
  	windows-amd64-v3 windows-arm64\
 
