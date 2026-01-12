@@ -18,13 +18,18 @@ import (
 )
 
 type ClientConfig struct {
-	Password                 string
-	IdleSessionCheckInterval time.Duration
-	IdleSessionTimeout       time.Duration
-	MinIdleSession           int
-	Server                   M.Socksaddr
-	Dialer                   N.Dialer
-	TLSConfig                *vmess.TLSConfig
+	Password                    string
+	IdleSessionCheckInterval    time.Duration
+	IdleSessionTimeout          time.Duration
+	MinIdleSession              int
+	EnsureIdleSession           int           // Proactive pool size
+	EnsureIdleSessionCreateRate int           // Max sessions per cycle
+	MinIdleSessionForAge        int           // Age-based protection
+	MaxConnectionLifetime       time.Duration // Age-based rotation
+	ConnectionLifetimeJitter    time.Duration // Randomization
+	Server                      M.Socksaddr
+	Dialer                      N.Dialer
+	TLSConfig                   *vmess.TLSConfig
 }
 
 type Client struct {
@@ -46,7 +51,16 @@ func NewClient(ctx context.Context, config ClientConfig) *Client {
 	}
 	// Initialize the padding state of this client
 	padding.UpdatePaddingScheme(padding.DefaultPaddingScheme, &c.padding)
-	c.sessionClient = session.NewClient(ctx, c.createOutboundTLSConnection, &c.padding, config.IdleSessionCheckInterval, config.IdleSessionTimeout, config.MinIdleSession)
+	c.sessionClient = session.NewClient(ctx, c.createOutboundTLSConnection, &c.padding, session.ClientConfig{
+		IdleSessionCheckInterval:    config.IdleSessionCheckInterval,
+		IdleSessionTimeout:          config.IdleSessionTimeout,
+		MinIdleSession:              config.MinIdleSession,
+		EnsureIdleSession:           config.EnsureIdleSession,
+		EnsureIdleSessionCreateRate: config.EnsureIdleSessionCreateRate,
+		MinIdleSessionForAge:        config.MinIdleSessionForAge,
+		MaxConnectionLifetime:       config.MaxConnectionLifetime,
+		ConnectionLifetimeJitter:    config.ConnectionLifetimeJitter,
+	})
 	return c
 }
 

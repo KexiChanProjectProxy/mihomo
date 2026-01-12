@@ -1,0 +1,448 @@
+# AnyTLS Session Management Configuration Examples
+# This file contains practical configuration examples for Mihomo's AnyTLS session management
+
+# ==============================================================================
+# Example 1: High Availability Service
+# ==============================================================================
+# Use Case: Production service requiring consistently low latency
+# Scenario: Always-ready connection pool with automatic rotation
+
+example1_high_availability:
+  experimental:
+    anytls-session-management:
+      ensure-idle-session: 10              # Maintain 10 ready sessions
+      ensure-idle-session-create-rate: 5   # Fast recovery (5 sessions/cycle)
+      min-idle-session: 5                  # Protect 5 from idle cleanup
+      min-idle-session-for-age: 2          # Protect 2 from age cleanup
+      max-connection-lifetime: 2h          # Rotate every 2 hours
+      connection-lifetime-jitter: 30m      # ±30min jitter (1.5-2.5h range)
+      idle-session-timeout: 10m            # Close idle after 10 minutes
+      idle-session-check-interval: 30s     # Check every 30 seconds
+
+  proxies:
+    - name: "ha-production"
+      type: anytls
+      server: ha.example.com
+      port: 443
+      password: "your-password-here"
+      udp: true
+      # Uses global config above
+
+# Expected Behavior:
+# - Pool maintains 10 ready sessions at all times
+# - If pool drops to 5, creates 5 new sessions within 30 seconds
+# - Sessions rotate every 1.5-2.5 hours (spread over time)
+# - Minimum 5 sessions always available
+# - New sessions created proactively before old ones expire
+
+
+# ==============================================================================
+# Example 2: Rate-Limited Destination
+# ==============================================================================
+# Use Case: API with strict rate limits (e.g., 10 requests/minute)
+# Scenario: Gradual pool recovery to avoid triggering rate limits
+
+example2_rate_limited:
+  experimental:
+    anytls-session-management:
+      ensure-idle-session: 5               # Small pool for rate-limited API
+      ensure-idle-session-create-rate: 1   # Only 1 new session per cycle
+      min-idle-session: 2                  # Keep minimum 2 sessions
+      idle-session-timeout: 15m            # Longer idle timeout
+      idle-session-check-interval: 60s     # Check every minute
+
+  proxies:
+    - name: "rate-limited-api"
+      type: anytls
+      server: limited.example.com
+      port: 443
+      password: "your-password-here"
+      # Uses global config above
+
+# Expected Behavior:
+# - After disruption, pool recovers at 1 session/minute
+# - Takes 5 minutes to reach target of 5 sessions
+# - Prevents rate limit triggers during recovery
+# - Conservative idle timeout to avoid frequent reconnections
+
+
+# ==============================================================================
+# Example 3: Security-Sensitive Connection
+# ==============================================================================
+# Use Case: Banking, healthcare, or security-critical services
+# Scenario: Regular connection rotation with minimal exposure window
+
+example3_security_sensitive:
+  experimental:
+    anytls-session-management:
+      ensure-idle-session: 5               # Moderate pool size
+      min-idle-session: 2                  # Minimum for availability
+      min-idle-session-for-age: 2          # Keep 2 even if old
+      max-connection-lifetime: 30m         # Rotate every 30 minutes
+      connection-lifetime-jitter: 10m      # ±10min jitter (20-40min range)
+      idle-session-timeout: 5m             # Aggressive idle cleanup
+      idle-session-check-interval: 30s
+
+  proxies:
+    - name: "secure-banking"
+      type: anytls
+      server: secure.example.com
+      port: 443
+      password: "your-password-here"
+      skip-cert-verify: false              # Always verify certificates
+      # Uses global config above
+
+# Expected Behavior:
+# - Sessions live 20-40 minutes before rotation
+# - Automatic rotation distributes connections over time
+# - Short exposure window for security
+# - Aggressive cleanup of unused sessions
+
+
+# ==============================================================================
+# Example 4: Mixed Subscription (Global + Overrides)
+# ==============================================================================
+# Use Case: Subscription with multiple nodes of varying quality
+# Scenario: Conservative defaults with per-node overrides
+
+example4_mixed_subscription:
+  experimental:
+    anytls-session-management:
+      # Conservative defaults for all nodes
+      ensure-idle-session: 5
+      ensure-idle-session-create-rate: 2
+      min-idle-session: 3
+      max-connection-lifetime: 2h
+      connection-lifetime-jitter: 30m
+      idle-session-timeout: 10m
+      idle-session-check-interval: 30s
+
+  proxies:
+    # Standard node - uses global defaults
+    - name: "node-standard-1"
+      type: anytls
+      server: node1.example.com
+      port: 443
+      password: "password1"
+      udp: true
+
+    - name: "node-standard-2"
+      type: anytls
+      server: node2.example.com
+      port: 443
+      password: "password2"
+      udp: true
+
+    # Premium node - larger pool for better performance
+    - name: "node-premium"
+      type: anytls
+      server: premium.example.com
+      port: 443
+      password: "premium-password"
+      udp: true
+      session-override:
+        ensure-idle-session: 20            # Larger pool
+        ensure-idle-session-create-rate: 5 # Faster recovery
+        min-idle-session: 10               # More protection
+
+    # Rate-limited node - slow recovery
+    - name: "node-limited"
+      type: anytls
+      server: limited.example.com
+      port: 443
+      password: "limited-password"
+      udp: true
+      session-override:
+        ensure-idle-session: 3             # Smaller pool
+        ensure-idle-session-create-rate: 1 # Very slow recovery
+        min-idle-session: 1                # Minimal protection
+
+# Expected Behavior:
+# - Standard nodes: 5-session pool, moderate recovery
+# - Premium node: 20-session pool, fast recovery, high availability
+# - Limited node: 3-session pool, slow recovery, avoids rate limits
+
+
+# ==============================================================================
+# Example 5: Low-Traffic Service
+# ==============================================================================
+# Use Case: Occasional use, minimal resource consumption
+# Scenario: On-demand connections, minimal idle pool
+
+example5_low_traffic:
+  experimental:
+    anytls-session-management:
+      ensure-idle-session: 2               # Minimal proactive pool
+      ensure-idle-session-create-rate: 1   # Slow recovery
+      min-idle-session: 1                  # Keep at least 1
+      idle-session-timeout: 5m             # Aggressive idle cleanup
+      idle-session-check-interval: 60s
+
+  proxies:
+    - name: "occasional-use"
+      type: anytls
+      server: backup.example.com
+      port: 443
+      password: "backup-password"
+      # Uses global config above
+
+# Expected Behavior:
+# - Minimal resource usage when idle
+# - Quick cleanup of unused sessions
+# - At least 1 session always ready
+# - Creates sessions on-demand when needed
+
+
+# ==============================================================================
+# Example 6: Bursty Traffic Pattern
+# ==============================================================================
+# Use Case: Services with periodic traffic spikes
+# Scenario: Large pool to handle bursts, fast recovery
+
+example6_bursty_traffic:
+  experimental:
+    anytls-session-management:
+      ensure-idle-session: 20              # Large pool for bursts
+      ensure-idle-session-create-rate: 10  # Very fast recovery
+      min-idle-session: 10                 # Keep many ready
+      max-connection-lifetime: 1h          # Faster rotation
+      connection-lifetime-jitter: 15m      # ±15min jitter
+      idle-session-timeout: 15m            # Moderate idle timeout
+      idle-session-check-interval: 30s
+
+  proxies:
+    - name: "bursty-service"
+      type: anytls
+      server: burst.example.com
+      port: 443
+      password: "burst-password"
+      udp: true
+      # Uses global config above
+
+# Expected Behavior:
+# - Can handle sudden traffic spikes with 20 ready sessions
+# - Recovers quickly after bursts (10 sessions/30s)
+# - Sessions rotate every 45-75 minutes
+# - Always maintains 10+ ready sessions
+
+
+# ==============================================================================
+# Example 7: Development/Testing Environment
+# ==============================================================================
+# Use Case: Local testing, debugging
+# Scenario: Minimal pool, frequent rotation for testing
+
+example7_development:
+  experimental:
+    anytls-session-management:
+      ensure-idle-session: 2               # Minimal pool for testing
+      ensure-idle-session-create-rate: 1
+      min-idle-session: 1
+      max-connection-lifetime: 5m          # Frequent rotation for testing
+      connection-lifetime-jitter: 1m       # Small jitter
+      idle-session-timeout: 2m             # Quick cleanup
+      idle-session-check-interval: 10s     # Frequent checks for debugging
+
+  proxies:
+    - name: "test-server"
+      type: anytls
+      server: localhost
+      port: 8443
+      password: "test-password"
+      skip-cert-verify: true               # OK for local testing
+      # Uses global config above
+
+# Expected Behavior:
+# - Minimal resource usage
+# - Frequent rotation helps test session creation
+# - Quick cleanup helps test pool management
+# - Good for debugging session lifecycle
+
+
+# ==============================================================================
+# Example 8: Legacy Configuration Migration
+# ==============================================================================
+# Showing backward compatibility with legacy fields
+
+example8_legacy_migration:
+  # Before: Legacy per-proxy configuration
+  legacy_config:
+    proxies:
+      - name: "legacy-proxy"
+        type: anytls
+        server: example.com
+        port: 443
+        password: "password"
+        idle-session-check-interval: 30    # Legacy field (seconds)
+        idle-session-timeout: 600          # Legacy field (seconds)
+        min-idle-session: 5                # Legacy field
+
+  # After: New global configuration
+  new_config:
+    experimental:
+      anytls-session-management:
+        idle-session-check-interval: 30s
+        idle-session-timeout: 10m          # 600 seconds = 10 minutes
+        min-idle-session: 5
+        # Plus new features
+        ensure-idle-session: 10
+        max-connection-lifetime: 2h
+        connection-lifetime-jitter: 30m
+
+    proxies:
+      - name: "migrated-proxy"
+        type: anytls
+        server: example.com
+        port: 443
+        password: "password"
+        # Legacy fields removed, uses global config
+
+
+# ==============================================================================
+# Example 9: Complete Production Configuration
+# ==============================================================================
+# Full configuration with all features
+
+example9_complete_production:
+  port: 7890
+  socks-port: 7891
+  mixed-port: 7892
+  allow-lan: true
+  mode: rule
+  log-level: info                          # Use 'debug' to see session logs
+
+  experimental:
+    anytls-session-management:
+      # Proactive pool maintenance
+      ensure-idle-session: 10
+      ensure-idle-session-create-rate: 3
+
+      # Passive protections
+      min-idle-session: 5
+      min-idle-session-for-age: 2
+
+      # Age-based rotation
+      max-connection-lifetime: 2h
+      connection-lifetime-jitter: 30m
+
+      # Idle management
+      idle-session-timeout: 10m
+      idle-session-check-interval: 30s
+
+  proxies:
+    - name: "primary-anytls"
+      type: anytls
+      server: primary.example.com
+      port: 443
+      password: "primary-password"
+      udp: true
+      alpn:
+        - h2
+        - http/1.1
+      skip-cert-verify: false
+
+    - name: "backup-anytls"
+      type: anytls
+      server: backup.example.com
+      port: 443
+      password: "backup-password"
+      udp: true
+      session-override:
+        ensure-idle-session: 5             # Smaller pool for backup
+        min-idle-session: 2
+
+  proxy-groups:
+    - name: "Auto"
+      type: url-test
+      proxies:
+        - primary-anytls
+        - backup-anytls
+      url: 'https://www.gstatic.com/generate_204'
+      interval: 300
+
+  rules:
+    - DOMAIN-SUFFIX,example.com,Auto
+    - GEOIP,CN,DIRECT
+    - MATCH,Auto
+
+
+# ==============================================================================
+# Tuning Guide
+# ==============================================================================
+# How to adjust settings based on observed behavior:
+
+tuning_guide:
+  # Issue: Frequent "no sessions available" errors
+  # Symptom: High latency or connection failures
+  # Solution: Increase pool size
+  solution_no_sessions:
+    ensure-idle-session: 15                # Increase from 10
+    ensure-idle-session-create-rate: 5     # Faster recovery
+
+  # Issue: Too many connections to destination
+  # Symptom: Destination rejects connections or rate limits
+  # Solution: Reduce pool size and slow recovery
+  solution_too_many:
+    ensure-idle-session: 5                 # Decrease from 10
+    ensure-idle-session-create-rate: 1     # Slower recovery
+
+  # Issue: Periodic latency spikes
+  # Symptom: Regular latency increases at intervals
+  # Solution: Add or increase jitter
+  solution_latency_spikes:
+    connection-lifetime-jitter: 45m        # Increase jitter range
+
+  # Issue: Sessions not rotating
+  # Symptom: Same sessions persist indefinitely
+  # Solution: Enable age-based rotation
+  solution_no_rotation:
+    max-connection-lifetime: 2h            # Enable rotation
+    connection-lifetime-jitter: 30m        # Add jitter
+
+  # Issue: Pool recovering too slowly
+  # Symptom: Long delays after network disruption
+  # Solution: Increase creation rate
+  solution_slow_recovery:
+    ensure-idle-session-create-rate: 10    # Very fast recovery
+
+  # Issue: Excessive resource usage
+  # Symptom: High memory/connection count
+  # Solution: Reduce pool size and increase cleanup
+  solution_high_resources:
+    ensure-idle-session: 3                 # Smaller pool
+    idle-session-timeout: 5m               # Aggressive cleanup
+
+
+# ==============================================================================
+# Performance Characteristics
+# ==============================================================================
+# Expected behavior for different configurations:
+
+performance_notes:
+  small_pool_2_5:
+    latency: "Low (pre-warmed connections)"
+    resource_usage: "Low"
+    burst_capacity: "Limited"
+    recovery_time: "Fast (with high create rate)"
+    best_for: "Low traffic, resource-constrained"
+
+  medium_pool_5_10:
+    latency: "Very Low"
+    resource_usage: "Moderate"
+    burst_capacity: "Good"
+    recovery_time: "Fast"
+    best_for: "Production services, balanced needs"
+
+  large_pool_15_20:
+    latency: "Minimal"
+    resource_usage: "High"
+    burst_capacity: "Excellent"
+    recovery_time: "Very Fast"
+    best_for: "High-traffic, performance-critical"
+
+  no_proactive_pool:
+    latency: "Variable (on-demand creation)"
+    resource_usage: "Minimal"
+    burst_capacity: "Poor"
+    recovery_time: "N/A"
+    best_for: "Occasional use, minimal overhead"

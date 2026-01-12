@@ -31,27 +31,58 @@ type Client struct {
 
 	padding *atomic.Pointer[padding.PaddingFactory]
 
+	// Idle timeout management
 	idleSessionTimeout time.Duration
 	minIdleSession     int
+
+	// Proactive pool management (NEW)
+	ensureIdleSession           int // Target pool size
+	ensureIdleSessionCreateRate int // Max sessions per cleanup cycle
+	minIdleSessionForAge        int // Separate protection for age-based cleanup
+
+	// Age-based rotation (NEW)
+	maxConnectionLifetime    time.Duration
+	connectionLifetimeJitter time.Duration
 }
 
-func NewClient(ctx context.Context, dialOut util.DialOutFunc, _padding *atomic.Pointer[padding.PaddingFactory], idleSessionCheckInterval, idleSessionTimeout time.Duration, minIdleSession int) *Client {
+// ClientConfig contains configuration for session client
+type ClientConfig struct {
+	IdleSessionCheckInterval    time.Duration
+	IdleSessionTimeout          time.Duration
+	MinIdleSession              int
+	EnsureIdleSession           int           // Proactive pool size
+	EnsureIdleSessionCreateRate int           // Max sessions per cycle
+	MinIdleSessionForAge        int           // Age-based protection
+	MaxConnectionLifetime       time.Duration // Age-based rotation
+	ConnectionLifetimeJitter    time.Duration // Randomization
+}
+
+func NewClient(ctx context.Context, dialOut util.DialOutFunc, _padding *atomic.Pointer[padding.PaddingFactory], config ClientConfig) *Client {
 	c := &Client{
-		sessions:           make(map[uint64]*Session),
-		dialOut:            dialOut,
-		padding:            _padding,
-		idleSessionTimeout: idleSessionTimeout,
-		minIdleSession:     minIdleSession,
+		sessions:                    make(map[uint64]*Session),
+		dialOut:                     dialOut,
+		padding:                     _padding,
+		idleSessionTimeout:          config.IdleSessionTimeout,
+		minIdleSession:              config.MinIdleSession,
+		ensureIdleSession:           config.EnsureIdleSession,
+		ensureIdleSessionCreateRate: config.EnsureIdleSessionCreateRate,
+		minIdleSessionForAge:        config.MinIdleSessionForAge,
+		maxConnectionLifetime:       config.MaxConnectionLifetime,
+		connectionLifetimeJitter:    config.ConnectionLifetimeJitter,
 	}
+
+	// Set defaults
+	idleSessionCheckInterval := config.IdleSessionCheckInterval
 	if idleSessionCheckInterval <= time.Second*5 {
 		idleSessionCheckInterval = time.Second * 30
 	}
 	if c.idleSessionTimeout <= time.Second*5 {
 		c.idleSessionTimeout = time.Second * 30
 	}
+
 	c.die, c.dieCancel = context.WithCancel(ctx)
 	c.idleSession = skiplist.NewSkipList[uint64, *Session]()
-	util.StartRoutine(c.die, idleSessionCheckInterval, c.idleCleanup)
+	util.StartRoutine(c.die, idleSessionCheckInterval, c.cleanup)
 	return c
 }
 
@@ -117,6 +148,7 @@ func (c *Client) createSession(ctx context.Context) (*Session, error) {
 
 	session := NewClientSession(underlying, c.padding)
 	session.seq = c.sessionCounter.Add(1)
+	session.createdAt = time.Now() // Track creation time for age-based rotation
 	session.dieHook = func() {
 		c.idleSessionLock.Lock()
 		c.idleSession.Remove(math.MaxUint64 - session.seq)
@@ -153,13 +185,18 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) idleCleanup() {
-	c.idleCleanupExpTime(time.Now().Add(-c.idleSessionTimeout))
-}
+// cleanup performs unified session pool maintenance:
+// 1. Idle timeout cleanup with minIdleSession protection
+// 2. Age-based rotation with minIdleSessionForAge protection and jitter
+// 3. Proactive session creation to maintain ensureIdleSession target
+func (c *Client) cleanup() {
+	now := time.Now()
+	idleExpTime := now.Add(-c.idleSessionTimeout)
 
-func (c *Client) idleCleanupExpTime(expTime time.Time) {
-	activeCount := 0
-	sessionToClose := make([]*Session, 0, c.idleSession.Len())
+	idleSessionsToClose := make([]*Session, 0)
+	ageSessionsToClose := make([]*Session, 0)
+	idleActiveCount := 0
+	ageActiveCount := 0
 
 	c.idleSessionLock.Lock()
 	it := c.idleSession.Iterate()
@@ -168,23 +205,111 @@ func (c *Client) idleCleanupExpTime(expTime time.Time) {
 		key := it.Key()
 		it.MoveToNext()
 
-		if !session.idleSince.Before(expTime) {
-			activeCount++
-			continue
+		shouldCloseIdle := false
+		shouldCloseAge := false
+
+		// Check idle timeout
+		if session.idleSince.Before(idleExpTime) {
+			if idleActiveCount >= c.minIdleSession {
+				shouldCloseIdle = true
+			} else {
+				session.idleSince = now // Reset to keep this session
+				idleActiveCount++
+			}
+		} else {
+			idleActiveCount++
 		}
 
-		if activeCount < c.minIdleSession {
-			session.idleSince = time.Now()
-			activeCount++
-			continue
+		// Check age-based expiration (if enabled)
+		if c.maxConnectionLifetime > 0 && !shouldCloseIdle {
+			// Calculate session-specific lifetime with jitter
+			sessionLifetime := c.maxConnectionLifetime
+			if c.connectionLifetimeJitter > 0 {
+				// Use session seq as seed for deterministic jitter per session
+				jitterRange := int64(c.connectionLifetimeJitter)
+				jitterOffset := int64(session.seq) % (jitterRange * 2)
+				sessionLifetime = sessionLifetime - c.connectionLifetimeJitter + time.Duration(jitterOffset)
+			}
+
+			ageExpTime := session.createdAt.Add(sessionLifetime)
+			if now.After(ageExpTime) {
+				if ageActiveCount >= c.minIdleSessionForAge {
+					shouldCloseAge = true
+				} else {
+					ageActiveCount++
+				}
+			}
 		}
 
-		sessionToClose = append(sessionToClose, session)
-		c.idleSession.Remove(key)
+		// Close session if either condition met
+		if shouldCloseIdle || shouldCloseAge {
+			if shouldCloseIdle {
+				idleSessionsToClose = append(idleSessionsToClose, session)
+			} else {
+				ageSessionsToClose = append(ageSessionsToClose, session)
+			}
+			c.idleSession.Remove(key)
+		}
 	}
+
+	currentPoolSize := c.idleSession.Len()
 	c.idleSessionLock.Unlock()
 
-	for _, session := range sessionToClose {
+	// Debug logging for idle cleanup
+	if len(idleSessionsToClose) > 0 {
+		log.Debugln("[AnyTLS] Idle cleanup: found %d idle sessions, closing %d (keeping %d protected)",
+			currentPoolSize+len(idleSessionsToClose), len(idleSessionsToClose), idleActiveCount)
+	}
+
+	// Debug logging for age cleanup
+	if len(ageSessionsToClose) > 0 {
+		log.Debugln("[AnyTLS] Age cleanup: closing %d aged sessions (keeping %d protected)",
+			len(ageSessionsToClose), ageActiveCount)
+	}
+
+	// Close sessions
+	for _, session := range idleSessionsToClose {
 		session.Close()
+	}
+	for _, session := range ageSessionsToClose {
+		session.Close()
+	}
+
+	// Proactive session creation (ensureIdleSession)
+	if c.ensureIdleSession > 0 {
+		deficit := c.ensureIdleSession - currentPoolSize
+		if deficit > 0 {
+			// Apply rate limiting
+			toCreate := deficit
+			if c.ensureIdleSessionCreateRate > 0 && toCreate > c.ensureIdleSessionCreateRate {
+				toCreate = c.ensureIdleSessionCreateRate
+			}
+
+			log.Debugln("[AnyTLS] Proactive pool maintenance: current=%d, target=%d, creating %d sessions",
+				currentPoolSize, c.ensureIdleSession, toCreate)
+
+			// Create sessions asynchronously to avoid blocking cleanup
+			for i := 0; i < toCreate; i++ {
+				go func() {
+					// Use background context for proactive creation
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					session, err := c.createSession(ctx)
+					if err != nil {
+						log.Debugln("[AnyTLS] Failed to create proactive session: %v", err)
+						return
+					}
+
+					// Immediately put into idle pool
+					c.idleSessionLock.Lock()
+					session.idleSince = time.Now()
+					c.idleSession.Insert(math.MaxUint64-session.seq, session)
+					c.idleSessionLock.Unlock()
+
+					log.Debugln("[AnyTLS] Created proactive session #%d", session.seq)
+				}()
+			}
+		}
 	}
 }

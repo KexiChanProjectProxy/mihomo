@@ -672,6 +672,11 @@ func match(metadata *C.Metadata, helper C.RuleMatchHelper) (C.Proxy, C.Rule, err
 				continue
 			}
 
+			// Populate MatchedRuleSet for hash-based routing
+			if providerNames := rule.ProviderNames(); len(providerNames) > 0 {
+				metadata.MatchedRuleSet = providerNames[0] // Use first provider name
+			}
+
 			return adapter, rule, nil
 		}
 	}

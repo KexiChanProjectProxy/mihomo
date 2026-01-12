@@ -191,11 +191,12 @@ type Metadata struct {
 	DNSMode      DNSMode    `json:"dnsMode"`
 	Uid          uint32     `json:"uid"`
 	Process      string     `json:"process"`
-	ProcessPath  string     `json:"processPath"`
-	SpecialProxy string     `json:"specialProxy"`
-	SpecialRules string     `json:"specialRules"`
-	RemoteDst    string     `json:"remoteDestination"`
-	DSCP         uint8      `json:"dscp"`
+	ProcessPath    string     `json:"processPath"`
+	SpecialProxy   string     `json:"specialProxy"`
+	SpecialRules   string     `json:"specialRules"`
+	MatchedRuleSet string     `json:"matchedRuleSet"` // Which ruleset matched this connection (for hash-based routing)
+	RemoteDst      string     `json:"remoteDestination"`
+	DSCP           uint8      `json:"dscp"`
 
 	RawSrcAddr net.Addr `json:"-"`
 	RawDstAddr net.Addr `json:"-"`

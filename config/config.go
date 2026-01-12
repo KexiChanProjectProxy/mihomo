@@ -117,9 +117,22 @@ type Cors struct {
 
 // Experimental config
 type Experimental struct {
-	QUICGoDisableGSO bool
-	QUICGoDisableECN bool
-	IP4PEnable       bool
+	QUICGoDisableGSO         bool
+	QUICGoDisableECN         bool
+	IP4PEnable               bool
+	AnyTLSSessionManagement  *AnyTLSSessionManagement `yaml:"anytls-session-management"`
+}
+
+// AnyTLSSessionManagement config for global session pool management
+type AnyTLSSessionManagement struct {
+	EnsureIdleSession           int           `yaml:"ensure-idle-session"`             // Proactive pool size (target)
+	MinIdleSession              int           `yaml:"min-idle-session"`                // Passive idle protection
+	MinIdleSessionForAge        int           `yaml:"min-idle-session-for-age"`        // Passive age protection
+	EnsureIdleSessionCreateRate int           `yaml:"ensure-idle-session-create-rate"` // Max new sessions per cycle
+	MaxConnectionLifetime       time.Duration `yaml:"max-connection-lifetime"`         // Age-based rotation
+	ConnectionLifetimeJitter    time.Duration `yaml:"connection-lifetime-jitter"`      // Randomization range
+	IdleSessionTimeout          time.Duration `yaml:"idle-session-timeout"`            // Idle timeout
+	IdleSessionCheckInterval    time.Duration `yaml:"idle-session-check-interval"`     // Cleanup cycle interval
 }
 
 // IPTables config
@@ -336,10 +349,11 @@ type RawIPTables struct {
 }
 
 type RawExperimental struct {
-	Fingerprints     []string `yaml:"fingerprints"`
-	QUICGoDisableGSO bool     `yaml:"quic-go-disable-gso"`
-	QUICGoDisableECN bool     `yaml:"quic-go-disable-ecn"`
-	IP4PEnable       bool     `yaml:"dialer-ip4p-convert"`
+	Fingerprints            []string                     `yaml:"fingerprints"`
+	QUICGoDisableGSO        bool                         `yaml:"quic-go-disable-gso"`
+	QUICGoDisableECN        bool                         `yaml:"quic-go-disable-ecn"`
+	IP4PEnable              bool                         `yaml:"dialer-ip4p-convert"`
+	AnyTLSSessionManagement *AnyTLSSessionManagement     `yaml:"anytls-session-management"`
 }
 
 type RawProfile struct {
@@ -804,9 +818,10 @@ func parseController(cfg *RawConfig) (*Controller, error) {
 
 func parseExperimental(cfg *RawConfig) (*Experimental, error) {
 	return &Experimental{
-		QUICGoDisableGSO: cfg.Experimental.QUICGoDisableGSO,
-		QUICGoDisableECN: cfg.Experimental.QUICGoDisableECN,
-		IP4PEnable:       cfg.Experimental.IP4PEnable,
+		QUICGoDisableGSO:        cfg.Experimental.QUICGoDisableGSO,
+		QUICGoDisableECN:        cfg.Experimental.QUICGoDisableECN,
+		IP4PEnable:              cfg.Experimental.IP4PEnable,
+		AnyTLSSessionManagement: cfg.Experimental.AnyTLSSessionManagement,
 	}, nil
 }
 
@@ -854,6 +869,11 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	proxiesConfig := cfg.Proxy
 	groupsConfig := cfg.ProxyGroup
 	providersConfig := cfg.ProxyProvider
+
+	// Set global AnyTLS session management config before parsing proxies
+	if cfg.Experimental.AnyTLSSessionManagement != nil {
+		outbound.SetGlobalAnyTLSSessionConfig(cfg.Experimental.AnyTLSSessionManagement)
+	}
 
 	var (
 		proxyList  []string

@@ -37,6 +37,7 @@ type Session struct {
 
 	// pool
 	seq       uint64
+	createdAt time.Time // NEW: Track session age for age-based rotation
 	idleSince time.Time
 	padding   *atomic.Pointer[padding.PaddingFactory]
 
