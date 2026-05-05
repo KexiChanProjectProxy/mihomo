@@ -68,14 +68,17 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
+      - name: Create bin directory
+        run: mkdir -p bin
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
           path: bin/
           merge-multiple: true
 
-      - name: Display downloaded files
-        run: ls -la bin/
+      - name: Verify artifacts exist
+        run: ls bin/*
 
       - name: Upload Release
         uses: softprops/action-gh-release@v3
