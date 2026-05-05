@@ -70,6 +70,31 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 
 	groupName := groupOption.Name
 
+	if groupOption.Type == "load-balance" {
+		lbOpt, isPRDMode, err := parseLoadBalanceOption(config)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", groupName, err)
+		}
+		if isPRDMode {
+			if err := ValidateLoadBalanceOption(lbOpt); err != nil {
+				return nil, fmt.Errorf("%s: %w", groupName, err)
+			}
+			primaryProxies, err := getProxies(proxyMap, lbOpt.PrimaryOutbounds)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", groupName, err)
+			}
+			var backupProxies []C.Proxy
+			if len(lbOpt.BackupOutbounds) > 0 {
+				backupProxies, err = getProxies(proxyMap, lbOpt.BackupOutbounds)
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", groupName, err)
+				}
+			}
+			strategy := GetLoadBalanceStrategy(lbOpt.Strategy)
+			return NewLoadBalancePRD(groupOption, primaryProxies, backupProxies, lbOpt, strategy)
+		}
+	}
+
 	providers := []P.ProxyProvider{}
 
 	if groupOption.IncludeAll {
