@@ -1,0 +1,16 @@
+/**
+ * Custom styles for light mode
+ * Minimal light theme overrides
+ */
+
+:root {
+  --vp-c-brand-1: #00b4f0;
+  --vp-c-brand-2: #0090c0;
+  --vp-c-brand-3: #007090;
+}
+
+/* Light mode overrides */
+.VPTheme.light {
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-soft: #f6f6f6;
+}

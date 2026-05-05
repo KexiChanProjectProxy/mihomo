@@ -40,7 +40,24 @@ Configuration example is located at [/docs/config.yaml](https://github.com/MetaC
 
 ## Docs
 
-Documentation can be found in [mihomo Docs](https://wiki.metacubex.one/).
+The official documentation source is maintained in-repo at [site/](site/) using VitePress.
+
+- **Docs Source**: [`site/`](site/)
+- **Deployment Guide**: [`site/guide/cloudflare-pages.md`](site/guide/cloudflare-pages.md)
+- **Legacy Wiki**: https://wiki.metacubex.one/ (supplemental / historical content)
+
+### Docs Development
+
+To run docs locally:
+
+```shell
+cd site
+npm install
+npm run docs:dev     # development server with hot reload
+npm run docs:build   # production build to site/.vitepress/dist/
+```
+
+See the in-repo guides under [`site/guide/`](site/guide/) for deployment and maintenance details.
 
 ## For development
 

@@ -26,3 +26,8 @@ test/config/cache*
 /output
 .vscode/
 .fleet/
+
+# VitePress docs site
+site/node_modules/
+site/.vitepress/cache/
+site/.vitepress/dist/
