@@ -61,7 +61,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "${{ matrix.goos }}-${{ matrix.output }}"
-          path: "mihomo-${{ matrix.goos }}-${{ matrix.output }}-${VERSION}.gz"
+          path: "mihomo-${{ matrix.goos }}-${{ matrix.output }}-${{ env.VERSION }}.gz"
 
   release:
     permissions: write-all
