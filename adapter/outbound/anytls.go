@@ -37,9 +37,15 @@ type AnyTLSOption struct {
 	Certificate              string     `proxy:"certificate,omitempty"`
 	PrivateKey               string     `proxy:"private-key,omitempty"`
 	UDP                      bool       `proxy:"udp,omitempty"`
-	IdleSessionCheckInterval int        `proxy:"idle-session-check-interval,omitempty"`
-	IdleSessionTimeout       int        `proxy:"idle-session-timeout,omitempty"`
-	MinIdleSession           int        `proxy:"min-idle-session,omitempty"`
+	IdleSessionCheckInterval      int `proxy:"idle-session-check-interval,omitempty"`
+	IdleSessionTimeout            int `proxy:"idle-session-timeout,omitempty"`
+	MinIdleSession                int `proxy:"min-idle-session,omitempty"`
+	Heartbeat                    int `proxy:"heartbeat,omitempty"`
+	MaxConnectionLifetime         int `proxy:"max-connection-lifetime,omitempty"`
+	ConnectionLifetimeJitter      int `proxy:"connection-lifetime-jitter,omitempty"`
+	MinIdleSessionForAge         int `proxy:"min-idle-session-for-age,omitempty"`
+	EnsureIdleSession            int `proxy:"ensure-idle-session,omitempty"`
+	EnsureIdleSessionCreateRate  int `proxy:"ensure-idle-session-create-rate,omitempty"`
 }
 
 func (t *AnyTLS) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
@@ -104,12 +110,18 @@ func NewAnyTLS(option AnyTLSOption) (*AnyTLS, error) {
 	singDialer := proxydialer.NewSingDialer(outbound.dialer)
 
 	tOption := anytls.ClientConfig{
-		Password:                 option.Password,
-		Server:                   M.ParseSocksaddrHostPort(option.Server, uint16(option.Port)),
-		Dialer:                   singDialer,
-		IdleSessionCheckInterval: time.Duration(option.IdleSessionCheckInterval) * time.Second,
-		IdleSessionTimeout:       time.Duration(option.IdleSessionTimeout) * time.Second,
-		MinIdleSession:           option.MinIdleSession,
+		Password:                    option.Password,
+		Server:                      M.ParseSocksaddrHostPort(option.Server, uint16(option.Port)),
+		Dialer:                      singDialer,
+		IdleSessionCheckInterval:    time.Duration(option.IdleSessionCheckInterval) * time.Second,
+		IdleSessionTimeout:          time.Duration(option.IdleSessionTimeout) * time.Second,
+		MinIdleSession:              option.MinIdleSession,
+		Heartbeat:                   time.Duration(option.Heartbeat) * time.Second,
+		MaxConnectionLifetime:       time.Duration(option.MaxConnectionLifetime) * time.Second,
+		ConnectionLifetimeJitter:    time.Duration(option.ConnectionLifetimeJitter) * time.Second,
+		MinIdleSessionForAge:        option.MinIdleSessionForAge,
+		EnsureIdleSession:           option.EnsureIdleSession,
+		EnsureIdleSessionCreateRate: option.EnsureIdleSessionCreateRate,
 	}
 	echConfig, err := option.ECHOpts.Parse()
 	if err != nil {

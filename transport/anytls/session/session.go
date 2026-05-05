@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -31,13 +32,21 @@ type Session struct {
 	dieOnce sync.Once
 	die     chan struct{}
 	dieHook func()
+	heartbeatSeq atomic.Int32
 
 	synDone     func()
 	synDoneLock sync.Mutex
 
+	onHeartbeatReady func()
+
+	// testHooks allows deterministic testing of heartbeat timing
+	testHooks sessionTestHooks
+
 	// pool
 	seq       uint64
 	idleSince time.Time
+	createdAt time.Time
+	maxLifetime time.Duration
 	padding   *atomic.Pointer[padding.PaddingFactory]
 
 	peerVersion byte
@@ -51,6 +60,11 @@ type Session struct {
 
 	// server
 	onNewStream func(stream *Stream)
+}
+
+type sessionTestHooks struct {
+	sleepFn func(d time.Duration) <-chan time.Time
+	afterFn func(d time.Duration) <-chan time.Time
 }
 
 func NewClientSession(conn net.Conn, _padding *atomic.Pointer[padding.PaddingFactory]) *Session {
@@ -76,9 +90,9 @@ func NewServerSession(conn net.Conn, onNewStream func(stream *Stream), _padding 
 	return s
 }
 
-func (s *Session) Run() {
+func (s *Session) Run(heartbeat time.Duration) {
 	if !s.isClient {
-		s.recvLoop()
+		s.recvLoop(nil)
 		return
 	}
 
@@ -92,7 +106,18 @@ func (s *Session) Run() {
 	s.buffering = true
 	s.writeControlFrame(f)
 
-	go s.recvLoop()
+	if heartbeat > 0 {
+		ready := make(chan struct{})
+		go s.recvLoop(func() {
+			close(ready)
+		})
+		go func() {
+			<-ready
+			s.heartbeatLoop(heartbeat)
+		}()
+	} else {
+		go s.recvLoop(nil)
+	}
 }
 
 // IsClosed does a safe check to see if we have shutdown
@@ -127,6 +152,64 @@ func (s *Session) Close() error {
 	} else {
 		return io.ErrClosedPipe
 	}
+}
+
+func (s *Session) heartbeatLoop(interval time.Duration) {
+	s.buffering = false
+
+	var jitter time.Duration
+	if s.testHooks.sleepFn != nil {
+		jitter = 0
+	} else {
+		jitter = time.Duration(rand.Int63n(int64(interval / 5)))
+	}
+	if s.testHooks.sleepFn != nil {
+		<-s.testHooks.sleepFn(jitter)
+	} else {
+		time.Sleep(jitter)
+	}
+
+	for {
+		select {
+		case <-s.die:
+			return
+		default:
+		}
+
+		if s.IsClosed() {
+			return
+		}
+
+		seq := s.heartbeatSeq.Add(1)
+
+		if _, err := s.writeControlFrame(newFrame(cmdHeartRequest, 0)); err != nil {
+			return
+		}
+
+		var timeout <-chan time.Time
+		if s.testHooks.afterFn != nil {
+			timeout = s.testHooks.afterFn(interval)
+		} else {
+			timeout = time.After(interval)
+		}
+
+		select {
+		case <-s.die:
+			return
+		case <-timeout:
+			if s.IsClosed() {
+				return
+			}
+			if s.heartbeatSeq.Load() == seq {
+				s.Close()
+				return
+			}
+		}
+	}
+}
+
+func (s *Session) setTestHooks(hooks sessionTestHooks) {
+	s.testHooks = hooks
 }
 
 // OpenStream is used to create a new stream for CLIENT
@@ -166,7 +249,7 @@ func (s *Session) OpenStream() (*Stream, error) {
 	}
 }
 
-func (s *Session) recvLoop() error {
+func (s *Session) recvLoop(onReady func()) error {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorln("[BUG] %v %s", r, string(debug.Stack()))
@@ -330,8 +413,7 @@ func (s *Session) recvLoop() error {
 					return err
 				}
 			case cmdHeartResponse:
-				// Active keepalive checking is not implemented yet
-				break
+				s.heartbeatSeq.Add(1)
 			case cmdServerSettings:
 				if hdr.Length() > 0 {
 					buffer := pool.Get(int(hdr.Length()))
@@ -340,13 +422,21 @@ func (s *Session) recvLoop() error {
 						return err
 					}
 					if s.isClient {
-						// check server's version
 						m := util.StringMapFromBytes(buffer)
 						if v, err := strconv.Atoi(m["v"]); err == nil {
 							s.peerVersion = byte(v)
 						}
+						if onReady != nil {
+							onReady()
+							onReady = nil
+						}
 					}
 					pool.Put(buffer)
+				} else if s.isClient {
+					if onReady != nil {
+						onReady()
+						onReady = nil
+					}
 				}
 			default:
 				// I don't know what command it is (can't have data)
