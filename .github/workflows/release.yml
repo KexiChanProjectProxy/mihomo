@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            goamd64: v1
+            output: amd64
+          - goos: linux
+            goarch: arm64
+            output: arm64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: 'https://github.com/MetaCubeX/go/releases/download/build'
+          go-version: '1.26'
+
+      - name: Verify Go installation
+        run: go version
+
+      - name: Set variables
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          echo "BUILDTIME=$(date)" >> $GITHUB_ENV
+          echo "CGO_ENABLED=0" >> $GITHUB_ENV
+          echo "BUILDTAG=-extldflags --static" >> $GITHUB_ENV
+          echo "GOTOOLCHAIN=local" >> $GITHUB_ENV
+
+      - name: Update CA
+        run: |
+          sudo apt-get update && sudo apt-get install ca-certificates
+          sudo update-ca-certificates
+          cp -f /etc/ssl/certs/ca-certificates.crt component/ca/ca-certificates.crt
+
+      - name: Build core
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOAMD64: ${{ matrix.goamd64 }}
+        run: |
+          go env
+          go build -v -tags "with_gvisor" -trimpath -ldflags "${BUILDTAG} -X 'github.com/metacubex/mihomo/constant.Version=${VERSION}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${BUILDTIME}' -w -s -buildid="
+          cp mihomo mihomo-${{ matrix.goos }}-${{ matrix.output }}
+          gzip -c mihomo-${{ matrix.goos }}-${{ matrix.output }} > mihomo-${{ matrix.goos }}-${{ matrix.output }}-${VERSION}.gz
+          rm mihomo-${{ matrix.goos }}-${{ matrix.output }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: "${{ matrix.goos }}-${{ matrix.output }}"
+          path: "mihomo-${{ matrix.goos }}-${{ matrix.output }}-${VERSION}.gz"
+
+  release:
+    permissions: write-all
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: bin/
+          merge-multiple: true
+
+      - name: Display downloaded files
+        run: ls -la bin/
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v3
+        if: ${{ success() }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: bin/*
+          generate_release_notes: true
